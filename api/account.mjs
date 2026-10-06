@@ -39,16 +39,27 @@ export default async function handler(req){
     if(action==='data'){
       const path=`classroom-compass/user-${u.id}.json`;
       if(method==='GET')return json({data:await readJson(path,{classes:[],activeClassId:null})});
-      if(method==='POST'){await writeJson(path,body.data||{});return json({ok:true,savedAt:new Date().toISOString()});}
+      if(method==='POST'){if(u.role==='viewer')return json({error:'Viewer is read-only'},403);await writeJson(path,body.data||{});return json({ok:true,savedAt:new Date().toISOString()});}
     }
     if(action==='users'){
       if(u.role!=='admin')return json({error:'Admin only'},403);const db=await users();
       if(method==='GET')return json({users:db.users.map(safeUser)});
       if(method==='POST'){
-        const email=String(body.email||'').trim().toLowerCase();if(!email||!body.password||String(body.password).length<8)return json({error:'Valid email and password required'},400);if(db.users.some(x=>x.email===email))return json({error:'Email already exists'},409);const role=['admin','teacher','viewer'].includes(body.role)?body.role:'teacher';const hp=hashPass(body.password);const nu={id:crypto.randomUUID(),name:String(body.name||'Teacher').trim(),email,role,active:true,salt:hp.salt,passwordHash:hp.hash,createdAt:new Date().toISOString()};db.users.push(nu);db.updatedAt=new Date().toISOString();await writeJson(USERS_PATH,db);return json({ok:true,user:safeUser(nu)},201);
+        const email=String(body.email||'').trim().toLowerCase();if(!email||!body.password||String(body.password).length<8)return json({error:'Valid email and password required'},400);if(db.users.some(x=>x.email===email))return json({error:'Email already exists'},409);const role=body.role==='viewer'?'viewer':'teacher';const hp=hashPass(body.password);const nu={id:crypto.randomUUID(),name:String(body.name||'Teacher').trim(),email,role,active:true,salt:hp.salt,passwordHash:hp.hash,createdAt:new Date().toISOString()};db.users.push(nu);db.updatedAt=new Date().toISOString();await writeJson(USERS_PATH,db);return json({ok:true,user:safeUser(nu)},201);
       }
       if(method==='PATCH'){
-        const t=db.users.find(x=>x.id===body.id);if(!t)return json({error:'User not found'},404);if(body.role&&['admin','teacher','viewer'].includes(body.role))t.role=body.role;if(typeof body.active==='boolean')t.active=body.active;if(body.name)t.name=String(body.name).trim();if(body.password&&String(body.password).length>=8){const hp=hashPass(body.password);t.salt=hp.salt;t.passwordHash=hp.hash}db.updatedAt=new Date().toISOString();await writeJson(USERS_PATH,db);return json({ok:true,user:safeUser(t)});
+        const t=db.users.find(x=>x.id===body.id);if(!t)return json({error:'User not found'},404);
+        if(t.role==='admin'){
+          if(body.role&&body.role!=='admin')return json({error:'Super Admin role cannot be changed'},403);
+          if(body.active===false)return json({error:'Super Admin cannot be disabled'},403);
+        }else if(body.role){
+          if(!['teacher','viewer'].includes(body.role))return json({error:'Only Teacher or Viewer roles are allowed'},400);
+          t.role=body.role;
+        }
+        if(typeof body.active==='boolean'&&t.role!=='admin')t.active=body.active;
+        if(body.name)t.name=String(body.name).trim();
+        if(body.password&&String(body.password).length>=8){const hp=hashPass(body.password);t.salt=hp.salt;t.passwordHash=hp.hash}
+        db.updatedAt=new Date().toISOString();await writeJson(USERS_PATH,db);return json({ok:true,user:safeUser(t)});
       }
     }
     if(action==='stats'){
